@@ -1,0 +1,21 @@
+# Compiled zsh
+*.zwc
+
+# Generated PDFs (user output)
+*.pdf
+
+# macOS
+.DS_Store
+
+# Editor files
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# Claude Code local settings
+.claude/
+
+# Template (development reference, not part of the distribution)
+template.zsh
