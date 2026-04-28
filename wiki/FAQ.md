@@ -42,6 +42,21 @@ Only if pagination is implemented as standard `<a href>` links in the HTML. Java
 
 The crawler tracks visited URLs in an associative array and never visits the same URL twice. URLs are normalized (fragments stripped, `index.html` collapsed) to reduce duplicates. However, if the same content is served at two different URLs, both will be included.
 
+### My crawl only fetches the seed URL and stops. Why?
+
+This usually means the site renders its navigation via JavaScript -- the article body itself may be in the HTML, but the related-article links and side navigation are injected client-side. `curl` can't see those links, so the BFS has nothing to follow.
+
+This is common on Salesforce Knowledge / Experience Cloud sites (URL pattern `/s/article/...`), Help Scout Docs, Zendesk Help Center, and similar SaaS knowledge bases.
+
+**Workaround**: Use `-S`/`--sitemap` to seed the crawl queue directly from the site's `sitemap.xml`. Most knowledge bases publish one. The sitemap-index format is supported (sub-sitemaps are followed recursively), and all URLs are still filtered through the normal scope check.
+
+```zsh
+./webmanual.zsh -S https://support.example.com/s/sitemap.xml \
+                https://support.example.com/s/article/getting-started
+```
+
+The seed URL is still required (it determines the scope prefix and serves as the entry point); the sitemap supplements it with additional URLs that BFS would otherwise miss.
+
 ---
 
 ## Output

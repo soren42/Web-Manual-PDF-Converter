@@ -3,7 +3,7 @@
 [![License: CC BY-SA 4.0](https://img.shields.io/badge/License-CC%20BY--SA%204.0-lightgrey.svg)](https://creativecommons.org/licenses/by-sa/4.0/)
 [![Shell: zsh 5.0+](https://img.shields.io/badge/Shell-zsh%205.0%2B-blue.svg)](https://www.zsh.org/)
 [![Platform: macOS | Linux](https://img.shields.io/badge/Platform-macOS%20%7C%20Linux-brightgreen.svg)](#platform-support)
-[![Version: 1.0.0](https://img.shields.io/badge/Version-1.0.0-orange.svg)](CHANGELOG.md)
+[![Version: 1.1.0](https://img.shields.io/badge/Version-1.1.0-orange.svg)](CHANGELOG.md)
 
 **Generate a multi-page, searchable PDF manual from any website.**
 
@@ -93,6 +93,7 @@ webmanual.zsh [OPTIONS] <URL>
 | `-D`, `--depth N` | Maximum crawl depth | `2` |
 | `-M`, `--max-pages N` | Maximum pages to include | `50` |
 | `-s`, `--scope URL` | Override auto-detected scope prefix | Auto |
+| `-S`, `--sitemap URL` | Seed crawl queue from a sitemap.xml URL | None |
 | `--no-ocr` | Skip the OCRmyPDF step | OCR enabled |
 | `--timeout N` | HTTP timeout in seconds | `30` |
 
@@ -107,6 +108,10 @@ webmanual.zsh [OPTIONS] <URL>
 
 # Verbose output, custom scope, no OCR
 ./webmanual.zsh -vv --no-ocr -s https://example.com/docs/ https://example.com/docs/api/intro
+
+# Seed the queue from a sitemap (for sites where link discovery returns nothing,
+# e.g., Salesforce/Lightning knowledge bases with JS-rendered navigation)
+./webmanual.zsh -S https://example.com/sitemap.xml https://example.com/docs/
 
 # Dry run -- preview what would be crawled
 ./webmanual.zsh -n https://docs.example.com/guide/

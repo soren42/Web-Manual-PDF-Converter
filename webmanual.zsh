@@ -33,6 +33,7 @@
 #   -D, --depth N       Maximum crawl depth (default: 2)
 #   -M, --max-pages N   Maximum number of pages to include (default: 50)
 #   -s, --scope URL     Override auto-detected scope prefix
+#   -S, --sitemap URL   Seed the crawl queue from a sitemap.xml URL
 #   --no-ocr            Skip the OCRmyPDF step
 #   --timeout N         HTTP timeout in seconds (default: 30)
 #
@@ -87,7 +88,7 @@ fi
 
 typeset -gr SCRIPT_NAME="${${(%):-%x}:t}"
 typeset -gr SCRIPT_DIR="${${(%):-%x}:A:h}"
-typeset -gr SCRIPT_VERSION="1.0.0"
+typeset -gr SCRIPT_VERSION="1.1.0"
 typeset -gr SCRIPT_AUTHOR="jason c. kay <j@son-kay.com>"
 
 # Exit codes
@@ -131,6 +132,7 @@ typeset -gi MAX_PAGES=50
 typeset -g SCOPE_PREFIX=""
 typeset -g NO_OCR=false
 typeset -gi HTTP_TIMEOUT=30
+typeset -g SITEMAP_URL=""
 
 # ==============================================================================
 # LOGGING AND OUTPUT
@@ -391,6 +393,11 @@ Options:
     -D, --depth N           Maximum crawl depth (default: 2)
     -M, --max-pages N       Maximum number of pages to include (default: 50)
     -s, --scope URL         Override the auto-detected scope prefix
+    -S, --sitemap URL       Seed crawl queue from a sitemap.xml URL.
+                            Useful for sites with JS-rendered navigation
+                            where link extraction returns nothing.
+                            Sitemap-index files are followed recursively.
+                            URLs are still filtered by scope.
     --no-ocr                Skip the OCRmyPDF searchability step
     --timeout N             HTTP timeout in seconds (default: 30)
 
@@ -420,6 +427,10 @@ Examples:
     ${SCRIPT_NAME} -v --no-ocr https://example.com/docs/api/
         Verbose mode, skip OCR step
 
+    ${SCRIPT_NAME} -S https://example.com/sitemap.xml https://example.com/docs/
+        Seed crawl queue from a sitemap (useful for JS-rendered sites
+        that don't expose links in their HTML)
+
 Exit Codes:
     0   Success
     1   General error
@@ -446,7 +457,7 @@ parse_arguments() {
     zmodload zsh/zutil
 
     local -a opt_help opt_version opt_verbose opt_quiet opt_dry_run opt_debug
-    local -a opt_output opt_depth opt_max_pages opt_scope opt_no_ocr opt_timeout
+    local -a opt_output opt_depth opt_max_pages opt_scope opt_sitemap opt_no_ocr opt_timeout
 
     zparseopts -D -E -F -K -- \
         h=opt_help      -help=opt_help \
@@ -459,6 +470,7 @@ parse_arguments() {
         D:=opt_depth    -depth:=opt_depth \
         M:=opt_max_pages -max-pages:=opt_max_pages \
         s:=opt_scope    -scope:=opt_scope \
+        S:=opt_sitemap  -sitemap:=opt_sitemap \
         -no-ocr=opt_no_ocr \
         -timeout:=opt_timeout \
         || {
@@ -493,6 +505,7 @@ parse_arguments() {
     (( ${#opt_depth} ))     && MAX_DEPTH=${opt_depth[-1]}
     (( ${#opt_max_pages} )) && MAX_PAGES=${opt_max_pages[-1]}
     (( ${#opt_scope} ))     && SCOPE_PREFIX=${opt_scope[-1]}
+    (( ${#opt_sitemap} ))   && SITEMAP_URL=${opt_sitemap[-1]}
     (( ${#opt_no_ocr} ))    && NO_OCR=true
     (( ${#opt_timeout} ))   && HTTP_TIMEOUT=${opt_timeout[-1]}
 
@@ -944,6 +957,93 @@ clean_html_for_print() {
 }
 
 # ==============================================================================
+# SITEMAP PARSING
+# ==============================================================================
+
+# Parse a sitemap XML file.
+# Outputs one entry per line, prefixed with type:
+#   loc<TAB>https://...   for content URLs (from <urlset>)
+#   sub<TAB>https://...   for sub-sitemap URLs (from <sitemapindex>)
+# Arguments: $1 - XML file path
+parse_sitemap_xml() {
+    emulate -L zsh
+    local xml_file="$1"
+
+    python3 -c "
+import sys
+import xml.etree.ElementTree as ET
+
+def strip_ns(tag):
+    return tag.split('}', 1)[1] if '}' in tag else tag
+
+try:
+    tree = ET.parse('$xml_file')
+    root = tree.getroot()
+except ET.ParseError as e:
+    sys.stderr.write(f'sitemap parse error: {e}\n')
+    sys.exit(1)
+except Exception as e:
+    sys.stderr.write(f'sitemap read error: {e}\n')
+    sys.exit(1)
+
+root_tag = strip_ns(root.tag)
+
+if root_tag == 'sitemapindex':
+    for sm in root:
+        if strip_ns(sm.tag) != 'sitemap':
+            continue
+        for child in sm:
+            if strip_ns(child.tag) == 'loc' and child.text:
+                print(f'sub\t{child.text.strip()}')
+elif root_tag == 'urlset':
+    for url in root:
+        if strip_ns(url.tag) != 'url':
+            continue
+        for child in url:
+            if strip_ns(child.tag) == 'loc' and child.text:
+                print(f'loc\t{child.text.strip()}')
+else:
+    sys.stderr.write(f'unexpected sitemap root element: {root_tag}\n')
+    sys.exit(1)
+" 2>/dev/null
+}
+
+# Recursively collect content URLs from a sitemap.
+# Follows <sitemapindex> entries up to a recursion depth limit.
+# Arguments: $1 - sitemap URL, $2 - work dir, $3 - recursion depth (default 0)
+# Outputs: one URL per line on stdout
+collect_sitemap_urls() {
+    emulate -L zsh
+    local sitemap_url="$1"
+    local work_dir="$2"
+    local -i rec_depth=${3:-0}
+
+    if (( rec_depth > 5 )); then
+        warn "Sitemap recursion depth exceeded; skipping ${sitemap_url}"
+        return 0
+    fi
+
+    local sitemap_file="${work_dir}/sitemap_${rec_depth}_${RANDOM}.xml"
+    debug "Fetching sitemap: ${sitemap_url}"
+    if ! fetch_url "$sitemap_url" "$sitemap_file"; then
+        warn "Failed to fetch sitemap: ${sitemap_url}"
+        return 1
+    fi
+
+    local entry_type="" entry_url=""
+    while IFS=$'\t' read -r entry_type entry_url; do
+        case "$entry_type" in
+            loc)
+                print -- "$entry_url"
+                ;;
+            sub)
+                collect_sitemap_urls "$entry_url" "$work_dir" $(( rec_depth + 1 ))
+                ;;
+        esac
+    done < <(parse_sitemap_xml "$sitemap_file")
+}
+
+# ==============================================================================
 # PDF GENERATION
 # ==============================================================================
 
@@ -1116,6 +1216,25 @@ main() {
     local current_line="" current_url="" current_depth=""
     local page_file="" title="" link=""
     local -a links=()
+    local -i sitemap_added=0
+    local sm_url=""
+
+    # If a sitemap was provided, expand it into the crawl queue.
+    # Sitemap URLs are enqueued at depth 0 so their links are also explored
+    # (subject to MAX_DEPTH). All entries are filtered by scope.
+    if [[ -n "$SITEMAP_URL" ]]; then
+        info "Loading sitemap: ${SITEMAP_URL}"
+        while IFS= read -r sm_url; do
+            [[ -z "$sm_url" ]] && continue
+            if url_in_scope "$sm_url" "$SCOPE_PREFIX"; then
+                print "${sm_url}\t0" >> "$queue_file"
+                (( sitemap_added++ ))
+            else
+                trace "Sitemap URL out of scope: ${sm_url}"
+            fi
+        done < <(collect_sitemap_urls "$SITEMAP_URL" "$work_dir" 0)
+        info "Sitemap added ${sitemap_added} in-scope URL(s) to queue"
+    fi
 
     info "Crawling..."
 
@@ -1132,16 +1251,16 @@ main() {
         [[ -n "${visited[$current_url]:-}" ]] && continue
         visited[$current_url]=1
 
+        # Respect max pages (check before any network calls)
+        if (( page_count >= MAX_PAGES )); then
+            warn "Reached max page limit (${MAX_PAGES}), stopping crawl"
+            break
+        fi
+
         # Skip non-HTML content
         if ! is_html_content "$current_url"; then
             debug "Skipping non-HTML: ${current_url}"
             continue
-        fi
-
-        # Respect max pages
-        if (( page_count >= MAX_PAGES )); then
-            warn "Reached max page limit (${MAX_PAGES}), stopping crawl"
-            break
         fi
 
         # Fetch the page

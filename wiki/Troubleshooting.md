@@ -18,7 +18,20 @@
 
 **How to confirm**: Run `curl -sS <URL> | grep -c '<script'` -- if the HTML is mostly script tags with an empty body div, the site is JS-rendered.
 
-**Workaround**: There is no built-in workaround for JS-rendered sites. Consider using the site's built-in PDF export if available, or a browser-based capture tool.
+**Workaround**: There is no built-in workaround for JS-rendered page bodies. Consider using the site's built-in PDF export if available, or a browser-based capture tool.
+
+### Crawl stops after the seed page (only one page in output)
+
+**Cause**: The seed page itself renders, but its navigation/sidebar is injected by JavaScript -- so curl sees no `<a href>` links to follow. Common on Salesforce Knowledge sites (URL pattern `/s/article/...`), Zendesk, Help Scout, and similar SaaS knowledge bases.
+
+**Solution**: Seed the crawl queue from the site's sitemap with `-S`/`--sitemap`:
+
+```zsh
+./webmanual.zsh -S https://support.example.com/s/sitemap.xml \
+                https://support.example.com/s/article/intro
+```
+
+`webmanual` follows sitemap-index files recursively and filters all sitemap URLs through the normal scope check. See the FAQ entry "My crawl only fetches the seed URL and stops" for more detail.
 
 ### Scope is too broad/narrow
 
